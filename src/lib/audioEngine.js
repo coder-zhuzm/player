@@ -6,6 +6,7 @@ class AudioEngine {
   constructor() {
     this.audioContext = null;
     this.analyser = null;
+    this.streamDestination = null;
 
     // 单轨道元素与节点
     this.mainAudio = null;
@@ -39,6 +40,9 @@ class AudioEngine {
     this.analyser.fftSize = 512;
     this.analyser.smoothingTimeConstant = 0.88;
 
+    // 创建录屏专用音频流目标节点
+    this.streamDestination = this.audioContext.createMediaStreamDestination();
+
     // 创建 HTMLAudioElement 实例
     this.mainAudio = new Audio();
     this.mainAudio.crossOrigin = 'anonymous';
@@ -69,6 +73,7 @@ class AudioEngine {
       this.accGain.connect(this.analyser);
 
       this.analyser.connect(this.audioContext.destination);
+      this.analyser.connect(this.streamDestination);
     } catch (e) {
       console.warn("AudioContext source setup notice:", e);
     }
@@ -80,6 +85,16 @@ class AudioEngine {
     if (this.audioContext && this.audioContext.state === 'suspended') {
       await this.audioContext.resume();
     }
+  }
+
+  /**
+   * 获取录屏专用的 AudioTrack
+   */
+  getAudioStreamTrack() {
+    if (this.streamDestination && this.streamDestination.stream) {
+      return this.streamDestination.stream.getAudioTracks()[0] || null;
+    }
+    return null;
   }
 
   /**

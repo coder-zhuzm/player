@@ -1,5 +1,5 @@
 import React from 'react';
-import { Play, Pause, Volume2, VolumeX, Upload, Search, Sparkles, Layers, FileText, Pin, PinOff } from 'lucide-react';
+import { Play, Pause, Volume2, VolumeX, Upload, Search, Sparkles, Layers, FileText, Pin, PinOff, Video, Square } from 'lucide-react';
 import { formatTime } from '../lib/utils';
 import { audioEngine } from '../lib/audioEngine';
 
@@ -20,7 +20,10 @@ export default function PlayerControls({
   onOpenLocalModal,
   onUploadLrc,
   isUILocked,
-  onToggleLockUI
+  onToggleLockUI,
+  isRecording,
+  recordTime,
+  onToggleRecord
 }) {
   return (
     <div className="w-full pb-4 px-4 select-none">
@@ -55,7 +58,28 @@ export default function PlayerControls({
         <div className="flex flex-col items-center w-full md:w-2/4 max-w-md space-y-2">
           
           {/* Action Button Row */}
-          <div className="flex items-center space-x-3.5 md:space-x-4">
+          <div className="flex items-center space-x-3 md:space-x-3.5">
+            
+            {/* Record Canvas Video Button */}
+            <button
+              onClick={onToggleRecord}
+              title={isRecording ? '点击停止录制并保存视频' : '录制当前音画动效视频片段'}
+              className={`p-2 rounded-xl transition-all duration-200 flex items-center space-x-1 ${
+                isRecording
+                  ? 'bg-red-500/20 text-red-400 border border-red-500/50 animate-pulse shadow-[0_0_15px_rgba(239,68,68,0.5)]'
+                  : 'text-white/60 hover:text-red-400 hover:bg-white/10'
+              }`}
+            >
+              {isRecording ? (
+                <>
+                  <Square className="w-4 h-4 fill-current text-red-500" />
+                  <span className="text-xs font-mono font-bold">{formatTime(recordTime)}</span>
+                </>
+              ) : (
+                <Video className="w-4 h-4 md:w-5 md:h-5" />
+              )}
+            </button>
+
             {/* Lock/Pin UI Controls */}
             <button
               onClick={onToggleLockUI}

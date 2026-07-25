@@ -6,11 +6,12 @@ import SearchModal from './components/SearchModal';
 import ModeSelector from './components/ModeSelector';
 import MultiTrackPanel from './components/MultiTrackPanel';
 import LocalAudioModal from './components/LocalAudioModal';
+import RecorderModal from './components/RecorderModal';
 import { audioEngine } from './lib/audioEngine';
 import { parseLrc } from './lib/lrcParser';
 import { searchSongs, getSongDetail, getApiKey } from './lib/yaohuApi';
 import { cleanFileNameForSearch } from './lib/utils';
-import { Search, Sparkles, FileAudio, Pin, PinOff } from 'lucide-react';
+import { Search, Sparkles, FileAudio, Pin, PinOff, Video, Square } from 'lucide-react';
 
 const DEFAULT_DEMO_SONG = {
   name: '梦幻旋律 (Dream Melody Demo)',
@@ -19,7 +20,7 @@ const DEFAULT_DEMO_SONG = {
   url: 'https://cdn.pixabay.com/download/audio/2022/05/27/audio_1808fbf07a.mp3?filename=lofi-study-112191.mp3',
   lyrics: [
     { time: 0.0, text: "🎵 梦幻旋律音乐播放器 - Dream Melody Player" },
-    { time: 3.0, text: "支持歌词时间轴微调 (+1s / -1s / 重置) 与控制栏固定锁定" },
+    { time: 3.0, text: "支持点击录制 60FPS 炫彩动效视频片段并一键下载" },
     { time: 7.0, text: "丝滑羽化渐变 Karaoke 扫光高亮 · 零生硬切断感" },
     { time: 12.0, text: "单句沉浸专注模式 · 自动平滑平移与高亮" },
     { time: 18.0, text: "点击底部按钮【选择本地音频】立即导入您的专属音乐" },
@@ -42,6 +43,16 @@ export default function App() {
 
   // Auto searching state
   const [isAutoSearching, setIsAutoSearching] = useState(false);
+
+  // Recording states
+  const [isRecording, setIsRecording] = useState(false);
+  const [recordTime, setRecordTime] = useState(0);
+  const [recordedVideoUrl, setRecordedVideoUrl] = useState(null);
+  const [isRecorderModalOpen, setIsRecorderModalOpen] = useState(false);
+
+  const mediaRecorderRef = useRef(null);
+  const recordedChunksRef = useRef([]);
+  const recordTimerRef = useRef(null);
 
   // Modals & Panels
   const [isSearchOpen, setIsSearchOpen] = useState(false);
@@ -75,7 +86,7 @@ export default function App() {
       setShowUI(true);
       if (hideTimerRef.current) clearTimeout(hideTimerRef.current);
       hideTimerRef.current = setTimeout(() => {
-        if (isPlaying && !isSearchOpen && !isModeMenuOpen && !isMultiTrackOpen && !isLocalModalOpen && !isUILocked) {
+        if (isPlaying && !isSearchOpen && !isModeMenuOpen && !isMultiTrackOpen && !isLocalModalOpen && !isUILocked && !isRecording) {
           setShowUI(false);
         }
       }, 3000);
@@ -86,7 +97,7 @@ export default function App() {
       window.removeEventListener('mousemove', handleMouseMove);
       if (hideTimerRef.current) clearTimeout(hideTimerRef.current);
     };
-  }, [isPlaying, isSearchOpen, isModeMenuOpen, isMultiTrackOpen, isLocalModalOpen, isUILocked]);
+  }, [isPlaying, isSearchOpen, isModeMenuOpen, isMultiTrackOpen, isLocalModalOpen, isUILocked, isRecording]);
 
   // 初始化设置默认音频
   useEffect(() => {
@@ -104,7 +115,7 @@ export default function App() {
         const dur = audioEngine.getDuration();
         setCurrentTime(cur);
         if (dur && !isNaN(dur)) setDuration(dur);
-      }, 100); // 100ms 刷新确保扫光丝滑
+      }, 100);
     }
     return () => clearInterval(intervalId);
   }, [isPlaying]);
@@ -142,6 +153,82 @@ export default function App() {
     setCurrentTime(time);
   };
 
+  // 录屏 / 录制动效片段控制
+  const startRecording = () => {
+    const canvas = document.querySelector('canvas');
+    if (!canvas || !canvas.captureStream) {
+      alert("您的浏览器不支持 Canvas 视频录制");
+      return;
+    }
+
+    try {
+      const canvasStream = canvas.captureStream(60); // 60 FPS
+      const audioTrack = audioEngine.getAudioStreamTrack();
+
+      const tracks = [...canvasStream.getVideoTracks()];
+      if (audioTrack) {
+        tracks.push(audioTrack);
+      }
+
+      const combinedStream = new MediaStream(tracks);
+
+      let mimeType = 'video/webm;codecs=vp9,opus';
+      if (!MediaRecorder.isTypeSupported(mimeType)) {
+        mimeType = 'video/webm';
+      }
+
+      recordedChunksRef.current = [];
+      const recorder = new MediaRecorder(combinedStream, {
+        mimeType,
+        videoBitsPerSecond: 5000000 // 5Mbps 高清画质
+      });
+
+      recorder.ondataavailable = (e) => {
+        if (e.data && e.data.size > 0) {
+          recordedChunksRef.current.push(e.data);
+        }
+      };
+
+      recorder.onstop = () => {
+        const blob = new Blob(recordedChunksRef.current, { type: 'video/webm' });
+        const videoUrl = URL.createObjectURL(blob);
+        setRecordedVideoUrl(videoUrl);
+        setIsRecorderModalOpen(true);
+      };
+
+      recorder.start(100);
+      mediaRecorderRef.current = recorder;
+      setIsRecording(true);
+      setRecordTime(0);
+
+      recordTimerRef.current = setInterval(() => {
+        setRecordTime(prev => prev + 1);
+      }, 1000);
+
+    } catch (err) {
+      console.error("Recording error:", err);
+      alert(`无法开启视频录制: ${err.message}`);
+    }
+  };
+
+  const stopRecording = () => {
+    if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
+      mediaRecorderRef.current.stop();
+    }
+    if (recordTimerRef.current) {
+      clearInterval(recordTimerRef.current);
+    }
+    setIsRecording(false);
+  };
+
+  const toggleRecording = () => {
+    if (isRecording) {
+      stopRecording();
+    } else {
+      startRecording();
+    }
+  };
+
   // 自动根据提取的歌名检索网络歌词
   const autoFetchLyricsForFileName = async (rawFileName) => {
     const apiKey = getApiKey();
@@ -151,7 +238,7 @@ export default function App() {
     if (!cleanTitle) return;
 
     setIsAutoSearching(true);
-    setLyricOffset(0); // 换歌重置偏移
+    setLyricOffset(0);
 
     try {
       let searchRes = await searchSongs(cleanTitle, 'wy', 5);
@@ -307,10 +394,10 @@ export default function App() {
       {/* Apple Music Style Ambient Aurora Backdrop Blur Overlay */}
       <div className="fixed inset-0 bg-black/40 backdrop-blur-[10px] pointer-events-none z-[1]" />
 
-      {/* Top Floating Bar (Auto Fade-out unless locked) */}
+      {/* Top Floating Bar (Auto Fade-out unless locked/recording) */}
       <header
         className={`fixed top-0 left-0 right-0 z-40 p-4 md:p-6 flex items-center justify-between pointer-events-none transition-all duration-700 ${
-          showUI || isUILocked ? 'opacity-100 translate-y-0' : 'opacity-0 -translate-y-4'
+          showUI || isUILocked || isRecording ? 'opacity-100 translate-y-0' : 'opacity-0 -translate-y-4'
         }`}
       >
         {/* Brand & Active Mode Badge */}
@@ -330,6 +417,20 @@ export default function App() {
 
         {/* Quick Actions */}
         <div className="flex items-center space-x-2 pointer-events-auto">
+          {/* Video Recording Pill */}
+          <button
+            onClick={toggleRecording}
+            className={`flex items-center space-x-1.5 px-3 py-1.5 rounded-full border backdrop-blur-xl text-xs font-semibold transition ${
+              isRecording
+                ? 'bg-red-500/20 border-red-500 text-red-400 animate-pulse shadow-[0_0_15px_rgba(239,68,68,0.5)]'
+                : 'bg-white/10 border-white/15 text-white/80 hover:text-red-400'
+            }`}
+            title={isRecording ? '点击停止录制并保存' : '录制当前音画片段'}
+          >
+            {isRecording ? <Square className="w-3.5 h-3.5 fill-current text-red-500" /> : <Video className="w-3.5 h-3.5 text-red-400" />}
+            <span>{isRecording ? `录制中 (${recordTime}s)` : '录制视频'}</span>
+          </button>
+
           {/* Lock UI Button */}
           <button
             onClick={() => setIsUILocked(!isUILocked)}
@@ -408,7 +509,7 @@ export default function App() {
       {/* Bottom Floating Player Controls */}
       <footer
         className={`fixed bottom-0 left-0 right-0 z-40 transition-all duration-700 ${
-          showUI || isUILocked ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-6 pointer-events-none'
+          showUI || isUILocked || isRecording ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-6 pointer-events-none'
         }`}
       >
         <PlayerControls
@@ -429,10 +530,20 @@ export default function App() {
           onUploadLrc={handleUploadLrc}
           isUILocked={isUILocked}
           onToggleLockUI={() => setIsUILocked(!isUILocked)}
+          isRecording={isRecording}
+          recordTime={recordTime}
+          onToggleRecord={toggleRecording}
         />
       </footer>
 
       {/* Modals */}
+      <RecorderModal
+        isOpen={isRecorderModalOpen}
+        onClose={() => setIsRecorderModalOpen(false)}
+        videoUrl={recordedVideoUrl}
+        songName={currentSong?.name}
+      />
+
       <LocalAudioModal
         isOpen={isLocalModalOpen}
         onClose={() => setIsLocalModalOpen(false)}
