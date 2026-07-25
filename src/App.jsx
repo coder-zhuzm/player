@@ -20,7 +20,7 @@ const DEFAULT_DEMO_SONG = {
   url: 'https://cdn.pixabay.com/download/audio/2022/05/27/audio_1808fbf07a.mp3?filename=lofi-study-112191.mp3',
   lyrics: [
     { time: 0.0, text: "🎵 梦幻旋律音乐播放器 - Dream Melody Player" },
-    { time: 3.0, text: "支持点击录制 60FPS 炫彩动效视频片段并一键下载" },
+    { time: 3.0, text: "全网页 DOM 画面录制 · 包含歌词扫亮与动效" },
     { time: 7.0, text: "丝滑羽化渐变 Karaoke 扫光高亮 · 零生硬切断感" },
     { time: 12.0, text: "单句沉浸专注模式 · 自动平滑平移与高亮" },
     { time: 18.0, text: "点击底部按钮【选择本地音频】立即导入您的专属音乐" },
@@ -53,6 +53,7 @@ export default function App() {
   const mediaRecorderRef = useRef(null);
   const recordedChunksRef = useRef([]);
   const recordTimerRef = useRef(null);
+  const currentStreamRef = useRef(null);
 
   // Modals & Panels
   const [isSearchOpen, setIsSearchOpen] = useState(false);
@@ -76,7 +77,7 @@ export default function App() {
 
   // 鼠标移动唤醒 UI，锁定状态下常亮不隐藏
   useEffect(() => {
-    if (isUILocked) {
+    if (isUILocked || isRecording) {
       setShowUI(true);
       if (hideTimerRef.current) clearTimeout(hideTimerRef.current);
       return;
@@ -153,16 +154,95 @@ export default function App() {
     setCurrentTime(time);
   };
 
-  // 录屏 / 录制动效片段控制
-  const startRecording = () => {
+  // 全网页 DOM 录屏 (包含 HTML 歌词高亮、标题、Canvas 动效与控制栏)
+  const startFullWebpageRecording = async () => {
+    try {
+      let screenStream = null;
+
+      // 使用 DisplayMedia 获取完整网页 DOM 画面
+      if (navigator.mediaDevices && navigator.mediaDevices.getDisplayMedia) {
+        screenStream = await navigator.mediaDevices.getDisplayMedia({
+          video: {
+            displaySurface: "browser",
+            frameRate: 60
+          },
+          audio: true
+        });
+      }
+
+      if (!screenStream) {
+        startCanvasFallbackRecording();
+        return;
+      }
+
+      currentStreamRef.current = screenStream;
+      const videoTrack = screenStream.getVideoTracks()[0];
+      const audioTrack = audioEngine.getAudioStreamTrack();
+
+      const tracks = [videoTrack];
+      if (audioTrack) {
+        tracks.push(audioTrack);
+      } else if (screenStream.getAudioTracks().length > 0) {
+        tracks.push(screenStream.getAudioTracks()[0]);
+      }
+
+      const combinedStream = new MediaStream(tracks);
+
+      let mimeType = 'video/webm;codecs=vp9,opus';
+      if (!MediaRecorder.isTypeSupported(mimeType)) {
+        mimeType = 'video/webm';
+      }
+
+      recordedChunksRef.current = [];
+      const recorder = new MediaRecorder(combinedStream, {
+        mimeType,
+        videoBitsPerSecond: 8000000 // 8Mbps 高清
+      });
+
+      // 当用户手动关闭浏览器录屏时自动停止
+      videoTrack.onended = () => {
+        stopRecording();
+      };
+
+      recorder.ondataavailable = (e) => {
+        if (e.data && e.data.size > 0) {
+          recordedChunksRef.current.push(e.data);
+        }
+      };
+
+      recorder.onstop = () => {
+        const blob = new Blob(recordedChunksRef.current, { type: 'video/webm' });
+        const videoUrl = URL.createObjectURL(blob);
+        setRecordedVideoUrl(videoUrl);
+        setIsRecorderModalOpen(true);
+      };
+
+      recorder.start(100);
+      mediaRecorderRef.current = recorder;
+      setIsRecording(true);
+      setRecordTime(0);
+
+      recordTimerRef.current = setInterval(() => {
+        setRecordTime(prev => prev + 1);
+      }, 1000);
+
+    } catch (err) {
+      console.warn("Full page recording notice:", err);
+      // 降级为 Canvas 录制
+      startCanvasFallbackRecording();
+    }
+  };
+
+  // 降级 Canvas 录制
+  const startCanvasFallbackRecording = () => {
     const canvas = document.querySelector('canvas');
     if (!canvas || !canvas.captureStream) {
-      alert("您的浏览器不支持 Canvas 视频录制");
+      alert("您的浏览器不支持视频录制");
       return;
     }
 
     try {
-      const canvasStream = canvas.captureStream(60); // 60 FPS
+      const canvasStream = canvas.captureStream(60);
       const audioTrack = audioEngine.getAudioStreamTrack();
 
       const tracks = [...canvasStream.getVideoTracks()];
@@ -180,7 +260,7 @@ export default function App() {
       recordedChunksRef.current = [];
       const recorder = new MediaRecorder(combinedStream, {
         mimeType,
-        videoBitsPerSecond: 5000000 // 5Mbps 高清画质
+        videoBitsPerSecond: 5000000
       });
 
       recorder.ondataavailable = (e) => {
@@ -206,14 +286,18 @@ export default function App() {
       }, 1000);
 
     } catch (err) {
-      console.error("Recording error:", err);
-      alert(`无法开启视频录制: ${err.message}`);
+      console.error("Fallback recording error:", err);
+      alert(`无法开启录制: ${err.message}`);
     }
   };
 
   const stopRecording = () => {
     if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
       mediaRecorderRef.current.stop();
+    }
+    if (currentStreamRef.current) {
+      currentStreamRef.current.getTracks().forEach(track => track.stop());
+      currentStreamRef.current = null;
     }
     if (recordTimerRef.current) {
       clearInterval(recordTimerRef.current);
@@ -225,7 +309,7 @@ export default function App() {
     if (isRecording) {
       stopRecording();
     } else {
-      startRecording();
+      startFullWebpageRecording();
     }
   };
 
@@ -425,10 +509,10 @@ export default function App() {
                 ? 'bg-red-500/20 border-red-500 text-red-400 animate-pulse shadow-[0_0_15px_rgba(239,68,68,0.5)]'
                 : 'bg-white/10 border-white/15 text-white/80 hover:text-red-400'
             }`}
-            title={isRecording ? '点击停止录制并保存' : '录制当前音画片段'}
+            title={isRecording ? '点击停止录制并保存' : '录制全网页音画片段 (包含歌词高亮与画面)'}
           >
             {isRecording ? <Square className="w-3.5 h-3.5 fill-current text-red-500" /> : <Video className="w-3.5 h-3.5 text-red-400" />}
-            <span>{isRecording ? `录制中 (${recordTime}s)` : '录制视频'}</span>
+            <span>{isRecording ? `录制中 (${recordTime}s)` : '录制全页画面'}</span>
           </button>
 
           {/* Lock UI Button */}
