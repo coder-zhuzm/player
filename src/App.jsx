@@ -20,13 +20,31 @@ const DEFAULT_DEMO_SONG = {
   url: 'https://cdn.pixabay.com/download/audio/2022/05/27/audio_1808fbf07a.mp3?filename=lofi-study-112191.mp3',
   lyrics: [
     { time: 0.0, text: "🎵 梦幻旋律音乐播放器 - Dream Melody Player" },
-    { time: 3.0, text: "全网页 DOM 画面录制 · 包含歌词扫亮与动效" },
+    { time: 3.0, text: "全网页 DOM 画面录制 · 支持一键导出 MP4 格式发朋友圈" },
     { time: 7.0, text: "丝滑羽化渐变 Karaoke 扫光高亮 · 零生硬切断感" },
     { time: 12.0, text: "单句沉浸专注模式 · 自动平滑平移与高亮" },
     { time: 18.0, text: "点击底部按钮【选择本地音频】立即导入您的专属音乐" },
     { time: 24.0, text: "Enjoy the Immersive Neon Music Visualization" },
   ]
 };
+
+// 获取浏览器支持的最佳 MP4 / WebM MIME 类型
+function getBestVideoMimeType() {
+  const candidates = [
+    'video/mp4;codecs=avc1.42E01E,mp4a.40.2',
+    'video/mp4;codecs=avc1',
+    'video/mp4',
+    'video/webm;codecs=vp9,opus',
+    'video/webm;codecs=vp8,opus',
+    'video/webm'
+  ];
+  for (const type of candidates) {
+    if (typeof MediaRecorder !== 'undefined' && MediaRecorder.isTypeSupported(type)) {
+      return type;
+    }
+  }
+  return 'video/webm';
+}
 
 export default function App() {
   const [currentMode, setCurrentMode] = useState('classic-dream');
@@ -48,6 +66,7 @@ export default function App() {
   const [isRecording, setIsRecording] = useState(false);
   const [recordTime, setRecordTime] = useState(0);
   const [recordedVideoUrl, setRecordedVideoUrl] = useState(null);
+  const [activeMimeType, setActiveMimeType] = useState('video/mp4');
   const [isRecorderModalOpen, setIsRecorderModalOpen] = useState(false);
 
   const mediaRecorderRef = useRef(null);
@@ -154,12 +173,11 @@ export default function App() {
     setCurrentTime(time);
   };
 
-  // 全网页 DOM 录屏 (包含 HTML 歌词高亮、标题、Canvas 动效与控制栏)
+  // 全网页 DOM 录屏 (包含 MP4 优先支持)
   const startFullWebpageRecording = async () => {
     try {
       let screenStream = null;
 
-      // 使用 DisplayMedia 获取完整网页 DOM 画面
       if (navigator.mediaDevices && navigator.mediaDevices.getDisplayMedia) {
         screenStream = await navigator.mediaDevices.getDisplayMedia({
           video: {
@@ -187,11 +205,8 @@ export default function App() {
       }
 
       const combinedStream = new MediaStream(tracks);
-
-      let mimeType = 'video/webm;codecs=vp9,opus';
-      if (!MediaRecorder.isTypeSupported(mimeType)) {
-        mimeType = 'video/webm';
-      }
+      const mimeType = getBestVideoMimeType();
+      setActiveMimeType(mimeType);
 
       recordedChunksRef.current = [];
       const recorder = new MediaRecorder(combinedStream, {
@@ -199,7 +214,6 @@ export default function App() {
         videoBitsPerSecond: 8000000 // 8Mbps 高清
       });
 
-      // 当用户手动关闭浏览器录屏时自动停止
       videoTrack.onended = () => {
         stopRecording();
       };
@@ -211,7 +225,8 @@ export default function App() {
       };
 
       recorder.onstop = () => {
-        const blob = new Blob(recordedChunksRef.current, { type: 'video/webm' });
+        const rawType = mimeType.includes('mp4') ? 'video/mp4' : 'video/webm';
+        const blob = new Blob(recordedChunksRef.current, { type: rawType });
         const videoUrl = URL.createObjectURL(blob);
         setRecordedVideoUrl(videoUrl);
         setIsRecorderModalOpen(true);
@@ -228,7 +243,6 @@ export default function App() {
 
     } catch (err) {
       console.warn("Full page recording notice:", err);
-      // 降级为 Canvas 录制
       startCanvasFallbackRecording();
     }
   };
@@ -251,11 +265,8 @@ export default function App() {
       }
 
       const combinedStream = new MediaStream(tracks);
-
-      let mimeType = 'video/webm;codecs=vp9,opus';
-      if (!MediaRecorder.isTypeSupported(mimeType)) {
-        mimeType = 'video/webm';
-      }
+      const mimeType = getBestVideoMimeType();
+      setActiveMimeType(mimeType);
 
       recordedChunksRef.current = [];
       const recorder = new MediaRecorder(combinedStream, {
@@ -270,7 +281,8 @@ export default function App() {
       };
 
       recorder.onstop = () => {
-        const blob = new Blob(recordedChunksRef.current, { type: 'video/webm' });
+        const rawType = mimeType.includes('mp4') ? 'video/mp4' : 'video/webm';
+        const blob = new Blob(recordedChunksRef.current, { type: rawType });
         const videoUrl = URL.createObjectURL(blob);
         setRecordedVideoUrl(videoUrl);
         setIsRecorderModalOpen(true);
@@ -509,10 +521,10 @@ export default function App() {
                 ? 'bg-red-500/20 border-red-500 text-red-400 animate-pulse shadow-[0_0_15px_rgba(239,68,68,0.5)]'
                 : 'bg-white/10 border-white/15 text-white/80 hover:text-red-400'
             }`}
-            title={isRecording ? '点击停止录制并保存' : '录制全网页音画片段 (包含歌词高亮与画面)'}
+            title={isRecording ? '点击停止录制并保存' : '录制全网页音画片段 (支持微信朋友圈 MP4 下载)'}
           >
             {isRecording ? <Square className="w-3.5 h-3.5 fill-current text-red-500" /> : <Video className="w-3.5 h-3.5 text-red-400" />}
-            <span>{isRecording ? `录制中 (${recordTime}s)` : '录制全页画面'}</span>
+            <span>{isRecording ? `录制中 (${recordTime}s)` : '录制 MP4 视频'}</span>
           </button>
 
           {/* Lock UI Button */}
@@ -626,6 +638,7 @@ export default function App() {
         onClose={() => setIsRecorderModalOpen(false)}
         videoUrl={recordedVideoUrl}
         songName={currentSong?.name}
+        mimeType={activeMimeType}
       />
 
       <LocalAudioModal
