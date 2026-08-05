@@ -1,6 +1,5 @@
 import React, { useState } from 'react';
-import { Upload, Mic, Disc3, Music, X, Layers, Check, Volume2, Search } from 'lucide-react';
-import { audioEngine } from '../lib/audioEngine';
+import { Upload, Mic, Disc3, Music, X, Layers, Search } from 'lucide-react';
 
 export default function LocalAudioModal({
   isOpen,
@@ -18,10 +17,15 @@ export default function LocalAudioModal({
   const [vocalFile, setVocalFile] = useState(null);
   const [accFile, setAccFile] = useState(null);
 
-  const [vocalVol, setVocalVol] = useState(0.8);
-  const [accVol, setAccVol] = useState(0.8);
-
   if (!isOpen) return null;
+
+  const resetAndClose = () => {
+    setSingleFile(null);
+    setVocalFile(null);
+    setAccFile(null);
+    setActiveTab('single');
+    onClose();
+  };
 
   const handleSingleSubmit = () => {
     if (!singleFile) return;
@@ -32,7 +36,7 @@ export default function LocalAudioModal({
       url,
       file: singleFile
     });
-    onClose();
+    resetAndClose();
   };
 
   const handleMultiSubmit = () => {
@@ -50,10 +54,10 @@ export default function LocalAudioModal({
       accUrl,
       vocalName: vocalFile ? vocalFile.name : '',
       accName: accFile ? accFile.name : '',
-      vocalVol,
-      accVol
+      vocalVol: 0.8,
+      accVol: 0.8
     });
-    onClose();
+    resetAndClose();
   };
 
   return (
@@ -67,7 +71,8 @@ export default function LocalAudioModal({
             <h2 className="text-lg font-bold text-white tracking-wide">选择本地音频 (单轨/分轨)</h2>
           </div>
           <button
-            onClick={onClose}
+            onClick={resetAndClose}
+            aria-label="关闭本地音频选择"
             className="p-1 rounded-lg text-white/60 hover:text-white hover:bg-white/10 transition"
           >
             <X className="w-5 h-5" />
@@ -106,7 +111,15 @@ export default function LocalAudioModal({
           {/* TAB 1: SINGLE MERGED TRACK */}
           {activeTab === 'single' && (
             <div className="space-y-4">
-              <label className="flex flex-col items-center justify-center w-full h-36 border-2 border-dashed border-white/20 hover:border-dream-purple rounded-2xl cursor-pointer bg-white/5 hover:bg-white/10 transition group">
+              <label
+                onDragOver={(event) => event.preventDefault()}
+                onDrop={(event) => {
+                  event.preventDefault();
+                  const file = [...event.dataTransfer.files].find(item => item.type.startsWith('audio/'));
+                  if (file) setSingleFile(file);
+                }}
+                className="flex flex-col items-center justify-center w-full h-36 border-2 border-dashed border-white/20 hover:border-dream-purple rounded-2xl cursor-pointer bg-white/5 hover:bg-white/10 transition group"
+              >
                 <div className="flex flex-col items-center justify-center space-y-2">
                   <Music className="w-8 h-8 text-dream-purple group-hover:scale-110 transition" />
                   <span className="text-xs font-medium text-white/80">
@@ -195,7 +208,7 @@ export default function LocalAudioModal({
                 disabled={!vocalFile && !accFile}
                 className="w-full py-3 bg-gradient-to-r from-dream-pink via-dream-purple to-dream-cyan text-white font-semibold rounded-xl text-sm hover:opacity-90 transition disabled:opacity-40"
               >
-                开启双轨道并行调音播放
+                {vocalFile && accFile ? '开启双轨道并行调音播放' : '载入所选分轨并播放'}
               </button>
             </div>
           )}
@@ -205,7 +218,7 @@ export default function LocalAudioModal({
             <span>选完本地音频后，可随时在线搜索匹配 LRC 歌词</span>
             <button
               onClick={() => {
-                onClose();
+                resetAndClose();
                 onOpenSearch();
               }}
               className="text-dream-purple hover:underline flex items-center space-x-1"

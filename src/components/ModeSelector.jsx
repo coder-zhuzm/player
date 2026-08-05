@@ -17,6 +17,7 @@ export default function ModeSelector({ isOpen, onClose, currentMode, onSelectMod
           </div>
           <button
             onClick={onClose}
+            aria-label="关闭动效选择"
             className="p-1 rounded-lg text-white/60 hover:text-white hover:bg-white/10 transition"
           >
             <X className="w-5 h-5" />

@@ -39,7 +39,9 @@ export default function LyricView({
   onSeekLyric,
   isAutoSearching = false,
   lyricOffset = 0,
-  onChangeOffset
+  onChangeOffset,
+  matchStatus = { type: 'idle', message: '' },
+  onOpenSearch
 }) {
   // 应用歌词时间轴偏移量 (currentTime + offset)
   const adjustedTime = currentTime + lyricOffset;
@@ -49,12 +51,13 @@ export default function LyricView({
 
   // 视图模式: 'single' (Apple Music 沉浸焦点) vs 'scroll' (全歌词长卷)
   const [viewMode, setViewMode] = useState('single');
+  const [isAutoFollow, setIsAutoFollow] = useState(true);
 
   // 计算唱句句内渲染进度 (0 ~ 100%)
   const calculateLineProgress = (index) => {
     if (index < 0 || index >= lyrics.length) return 0;
     const startTime = lyrics[index].time;
-    let endTime = duration || (startTime + 5);
+    let endTime = Math.min(duration || (startTime + 5), startTime + 8);
 
     if (index < lyrics.length - 1) {
       endTime = lyrics[index + 1].time;
@@ -70,24 +73,13 @@ export default function LyricView({
 
   // 全文列表模式下的平滑居中
   useEffect(() => {
-    if (viewMode === 'scroll' && activeItemRef.current) {
+    if (viewMode === 'scroll' && isAutoFollow && activeItemRef.current) {
       activeItemRef.current.scrollIntoView({
         behavior: 'smooth',
         block: 'center',
       });
     }
-  }, [activeIndex, viewMode]);
-
-  if (isAutoSearching) {
-    return (
-      <div className="flex flex-col items-center justify-center h-full space-y-4">
-        <div className="flex items-center space-x-3 px-6 py-3 rounded-full bg-white/10 border border-white/15 backdrop-blur-2xl text-white shadow-2xl animate-pulse">
-          <Sparkles className="w-5 h-5 text-dream-purple animate-spin" />
-          <span className="text-sm font-medium tracking-wide">从本地文件名极速匹配全网 LRC 歌词...</span>
-        </div>
-      </div>
-    );
-  }
+  }, [activeIndex, viewMode, isAutoFollow]);
 
   if (!lyrics || lyrics.length === 0) {
     return (
@@ -97,7 +89,13 @@ export default function LyricView({
             🎵
           </div>
           <p className="text-base text-white/90 font-semibold tracking-wide">已成功载入本地音频文件</p>
-          <p className="text-xs text-white/50 font-light">点击右上角【匹配歌词】自动获取或导入 LRC 文件</p>
+          <p className="text-xs text-white/50 font-light">{matchStatus.message || '搜索在线歌词，或从底部导入本地 LRC 文件'}</p>
+          <button
+            onClick={onOpenSearch}
+            className="mt-2 rounded-full border border-dream-purple/50 bg-dream-purple/15 px-4 py-1.5 text-xs font-semibold text-dream-purple hover:bg-dream-purple/25"
+          >
+            搜索匹配歌词
+          </button>
         </div>
       </div>
     );
@@ -109,11 +107,24 @@ export default function LyricView({
 
   return (
     <div className="relative w-full h-full flex flex-col items-center justify-center select-none overflow-hidden px-6">
+      {(isAutoSearching || matchStatus.message) && (
+        <div className={`absolute left-6 top-4 z-20 flex max-w-md items-center gap-2 rounded-full border px-4 py-2 text-xs backdrop-blur-2xl ${
+          matchStatus.type === 'error' || matchStatus.type === 'needs-key'
+            ? 'border-amber-400/30 bg-amber-500/10 text-amber-200'
+            : 'border-white/15 bg-black/60 text-white/75'
+        }`}>
+          {isAutoSearching && <Sparkles className="h-3.5 w-3.5 animate-spin text-dream-purple" />}
+          <span className="truncate">{matchStatus.message}</span>
+          {(matchStatus.type === 'error' || matchStatus.type === 'needs-key') && (
+            <button onClick={onOpenSearch} className="shrink-0 font-semibold text-dream-purple hover:underline">手动匹配</button>
+          )}
+        </div>
+      )}
       
       {/* Sleek Floating Control Toolbar (Mode Switcher + Offset Micro-tuner) */}
       <div className="absolute top-4 right-6 z-20 flex items-center space-x-2">
         
-        {/* Lyric Offset Micro-tuner Pill (-1s / -0.5s / Reset / +0.5s / +1s) */}
+        {/* Lyric Offset Micro-tuner Pill (-0.1s / Reset / +0.1s) */}
         <div className="flex items-center space-x-1 bg-black/60 border border-white/15 rounded-full px-2.5 py-1 backdrop-blur-2xl shadow-2xl text-xs text-white/80">
           <Clock className="w-3.5 h-3.5 text-dream-cyan mr-0.5" />
           <span className="text-[11px] font-mono w-14 text-center">
@@ -121,9 +132,9 @@ export default function LyricView({
           </span>
 
           <button
-            onClick={() => onChangeOffset && onChangeOffset(lyricOffset - 0.5)}
+            onClick={() => onChangeOffset && onChangeOffset(Number((lyricOffset - 0.1).toFixed(1)))}
             className="p-1 hover:bg-white/15 rounded-full transition text-white/70 hover:text-white"
-            title="歌词提前 0.5 秒"
+            title="歌词延后 0.1 秒"
           >
             <Minus className="w-3 h-3" />
           </button>
@@ -137,9 +148,9 @@ export default function LyricView({
           </button>
 
           <button
-            onClick={() => onChangeOffset && onChangeOffset(lyricOffset + 0.5)}
+            onClick={() => onChangeOffset && onChangeOffset(Number((lyricOffset + 0.1).toFixed(1)))}
             className="p-1 hover:bg-white/15 rounded-full transition text-white/70 hover:text-white"
-            title="歌词延后 0.5 秒"
+            title="歌词提前 0.1 秒"
           >
             <Plus className="w-3 h-3" />
           </button>
@@ -239,8 +250,18 @@ export default function LyricView({
       {viewMode === 'scroll' && (
         <div
           ref={containerRef}
+          onWheel={() => setIsAutoFollow(false)}
+          onTouchStart={() => setIsAutoFollow(false)}
           className="w-full h-full overflow-y-auto px-4 py-36 scroll-smooth no-scrollbar select-none text-center"
         >
+          {!isAutoFollow && (
+            <button
+              onClick={() => setIsAutoFollow(true)}
+              className="sticky top-0 z-10 mx-auto mb-4 rounded-full border border-white/15 bg-black/70 px-4 py-1.5 text-xs text-white/75 backdrop-blur-xl hover:text-white"
+            >
+              恢复自动跟随
+            </button>
+          )}
           <div className="space-y-6 max-w-2xl mx-auto py-8">
             {lyrics.map((item, index) => {
               const isActive = index === activeIndex;
@@ -252,7 +273,10 @@ export default function LyricView({
                 <div
                   key={`${item.time}-${index}`}
                   ref={isActive ? activeItemRef : null}
-                  onClick={() => onSeekLyric && onSeekLyric(item.time - lyricOffset)}
+                  onClick={() => {
+                    setIsAutoFollow(true);
+                    onSeekLyric && onSeekLyric(item.time - lyricOffset);
+                  }}
                   style={{ opacity }}
                   className={`transition-all duration-300 cursor-pointer py-2 px-4 rounded-2xl transform hover:opacity-100 hover:scale-105 ${
                     isActive ? 'scale-110 font-extrabold' : 'scale-100 font-medium'

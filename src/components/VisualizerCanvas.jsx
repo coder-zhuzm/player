@@ -10,7 +10,7 @@ export const VISUAL_MODES = [
   { id: 'minimal-record', name: '极简录制', color: '#888888', icon: '⬜', desc: '极简纯粹 + 底部单色波纹线条' },
 ];
 
-export default function VisualizerCanvas({ mode = 'classic-dream', isPlaying = false, onCanvasClick }) {
+export default function VisualizerCanvas({ mode = 'classic-dream', onCanvasClick }) {
   const canvasRef = useRef(null);
 
   useEffect(() => {
@@ -140,7 +140,7 @@ export default function VisualizerCanvas({ mode = 'classic-dream', isPlaying = f
       cancelAnimationFrame(animId);
       window.removeEventListener('resize', handleResize);
     };
-  }, [mode, isPlaying]);
+  }, [mode]);
 
   return (
     <canvas

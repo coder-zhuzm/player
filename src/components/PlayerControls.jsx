@@ -63,6 +63,7 @@ export default function PlayerControls({
             {/* Record Canvas Video Button */}
             <button
               onClick={onToggleRecord}
+              aria-label={isRecording ? '停止录制并保存视频' : '录制音画视频'}
               title={isRecording ? '点击停止录制并保存视频' : '录制当前音画动效视频片段'}
               className={`p-2 rounded-xl transition-all duration-200 flex items-center space-x-1 ${
                 isRecording
@@ -83,6 +84,7 @@ export default function PlayerControls({
             {/* Lock/Pin UI Controls */}
             <button
               onClick={onToggleLockUI}
+              aria-label={isUILocked ? '取消锁定控制栏' : '锁定控制栏常亮'}
               title={isUILocked ? 'UI 已锁定常亮 (点击取消锁定)' : '锁定 UI 面板常亮不自动隐藏'}
               className={`p-2 rounded-xl transition-all duration-200 ${
                 isUILocked
@@ -114,6 +116,7 @@ export default function PlayerControls({
             {/* Play / Pause Main Trigger */}
             <button
               onClick={onTogglePlay}
+              aria-label={isPlaying ? '暂停' : '播放'}
               className="p-3.5 bg-gradient-to-r from-dream-pink via-dream-purple to-dream-cyan text-white rounded-full shadow-[0_0_25px_rgba(192,132,252,0.6)] hover:scale-105 active:scale-95 transition-all duration-200"
             >
               {isPlaying ? <Pause className="w-5 h-5 md:w-6 md:h-6 fill-current" /> : <Play className="w-5 h-5 md:w-6 md:h-6 fill-current ml-0.5" />}
@@ -156,6 +159,7 @@ export default function PlayerControls({
               max={duration || 100}
               value={currentTime || 0}
               onChange={(e) => onSeek(parseFloat(e.target.value))}
+              aria-label="播放进度"
               className="flex-1 accent-dream-purple h-1 bg-white/20 rounded-lg cursor-pointer hover:h-1.5 transition-all"
             />
             <span className="w-9">{formatTime(duration)}</span>
@@ -168,8 +172,9 @@ export default function PlayerControls({
             onClick={() => {
               const nextMuted = !isMuted;
               setIsMuted(nextMuted);
-              audioEngine.setMainVolume(volume, nextMuted);
+              audioEngine.setMasterVolume(volume, nextMuted);
             }}
+            aria-label={isMuted ? '取消静音' : '静音'}
             className="text-white/70 hover:text-white transition"
           >
             {isMuted || volume === 0 ? (
@@ -187,8 +192,9 @@ export default function PlayerControls({
             onChange={(e) => {
               const val = parseFloat(e.target.value);
               setVolume(val);
-              audioEngine.setMainVolume(val, isMuted);
+              audioEngine.setMasterVolume(val, isMuted);
             }}
+            aria-label="主音量"
             className="w-20 accent-dream-cyan h-1 bg-white/20 rounded-lg cursor-pointer"
           />
         </div>

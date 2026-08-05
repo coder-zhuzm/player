@@ -20,7 +20,7 @@ const DEFAULT_DEMO_SONG = {
   url: 'https://cdn.pixabay.com/download/audio/2022/05/27/audio_1808fbf07a.mp3?filename=lofi-study-112191.mp3',
   lyrics: [
     { time: 0.0, text: "🎵 梦幻旋律音乐播放器 - Dream Melody Player" },
-    { time: 3.0, text: "全网页 DOM 画面录制 · 支持一键导出 MP4 格式发朋友圈" },
+    { time: 3.0, text: "全网页 DOM 画面录制 · 自动选择浏览器支持的视频格式" },
     { time: 7.0, text: "丝滑羽化渐变 Karaoke 扫光高亮 · 零生硬切断感" },
     { time: 12.0, text: "单句沉浸专注模式 · 自动平滑平移与高亮" },
     { time: 18.0, text: "点击底部按钮【选择本地音频】立即导入您的专属音乐" },
@@ -55,24 +55,29 @@ export default function App() {
 
   const [volume, setVolume] = useState(0.8);
   const [isMuted, setIsMuted] = useState(false);
+  const [playbackNotice, setPlaybackNotice] = useState('');
 
   // Lyric offset micro-tuner (seconds)
   const [lyricOffset, setLyricOffset] = useState(0);
 
   // Auto searching state
   const [isAutoSearching, setIsAutoSearching] = useState(false);
+  const [lyricMatchStatus, setLyricMatchStatus] = useState({ type: 'idle', message: '' });
+  const [searchKeyword, setSearchKeyword] = useState('');
 
   // Recording states
   const [isRecording, setIsRecording] = useState(false);
   const [recordTime, setRecordTime] = useState(0);
   const [recordedVideoUrl, setRecordedVideoUrl] = useState(null);
-  const [activeMimeType, setActiveMimeType] = useState('video/mp4');
+  const [activeMimeType, setActiveMimeType] = useState('video/webm');
   const [isRecorderModalOpen, setIsRecorderModalOpen] = useState(false);
 
   const mediaRecorderRef = useRef(null);
   const recordedChunksRef = useRef([]);
   const recordTimerRef = useRef(null);
   const currentStreamRef = useRef(null);
+  const localObjectUrlsRef = useRef([]);
+  const lyricRequestIdRef = useRef(0);
 
   // Modals & Panels
   const [isSearchOpen, setIsSearchOpen] = useState(false);
@@ -119,12 +124,40 @@ export default function App() {
     };
   }, [isPlaying, isSearchOpen, isModeMenuOpen, isMultiTrackOpen, isLocalModalOpen, isUILocked, isRecording]);
 
-  // 初始化设置默认音频
+  // 初始化默认音频并订阅引擎状态
   useEffect(() => {
-    if (currentSong?.url && !isMultiTrack) {
-      audioEngine.setMainTrack(currentSong.url);
-    }
-  }, [currentSong?.url]);
+    audioEngine.setMainTrack(DEFAULT_DEMO_SONG.url);
+    audioEngine.setMasterVolume(volume, isMuted);
+
+    const offEnded = audioEngine.on('ended', () => {
+      setIsPlaying(false);
+      setCurrentTime(audioEngine.getDuration());
+    });
+    const offMetadata = audioEngine.on('metadata', ({ duration: nextDuration }) => {
+      if (Number.isFinite(nextDuration) && nextDuration > 0) setDuration(nextDuration);
+    });
+    const offError = audioEngine.on('error', ({ message }) => {
+      setIsPlaying(false);
+      setPlaybackNotice(message);
+    });
+
+    return () => {
+      offEnded();
+      offMetadata();
+      offError();
+      localObjectUrlsRef.current.filter(Boolean).forEach(url => URL.revokeObjectURL(url));
+    };
+  }, []);
+
+  useEffect(() => () => {
+    if (recordedVideoUrl) URL.revokeObjectURL(recordedVideoUrl);
+  }, [recordedVideoUrl]);
+
+  useEffect(() => {
+    if (lyricMatchStatus.type !== 'success') return undefined;
+    const timer = setTimeout(() => setLyricMatchStatus({ type: 'idle', message: '' }), 4500);
+    return () => clearTimeout(timer);
+  }, [lyricMatchStatus]);
 
   // 音频播放时间轮询 Tick
   useEffect(() => {
@@ -154,23 +187,39 @@ export default function App() {
   }, [isPlaying]);
 
   // 播放 / 暂停切换
+  const startPlayback = () => {
+    setPlaybackNotice('正在载入音频…');
+    return audioEngine.play().then(() => {
+      setIsPlaying(true);
+      setPlaybackNotice('');
+    }).catch(err => {
+      setIsPlaying(false);
+      setPlaybackNotice(err?.message || '无法播放该音频');
+      console.warn("Playback error:", err);
+    });
+  };
+
   const togglePlay = () => {
     if (isPlaying) {
       audioEngine.pause();
       setIsPlaying(false);
     } else {
-      audioEngine.play().then(() => {
-        setIsPlaying(true);
-      }).catch(err => {
-        console.warn("Playback error:", err);
-      });
+      startPlayback();
     }
   };
 
   // 进度跳转 (Seek)
   const handleSeek = (time) => {
-    audioEngine.seek(time);
-    setCurrentTime(time);
+    const safeTime = audioEngine.seek(time);
+    setCurrentTime(safeTime);
+  };
+
+  const replaceLocalObjectUrls = (urls) => {
+    const nextUrls = urls;
+    localObjectUrlsRef.current
+      .filter(url => url && !nextUrls.includes(url))
+      .forEach(url => URL.revokeObjectURL(url));
+    localObjectUrlsRef.current = nextUrls;
   };
 
   // 全网页 DOM 录屏 (包含 MP4 优先支持)
@@ -243,6 +292,10 @@ export default function App() {
 
     } catch (err) {
       console.warn("Full page recording notice:", err);
+      if (err?.name === 'NotAllowedError' || err?.name === 'AbortError') {
+        setPlaybackNotice('已取消页面录制');
+        return;
+      }
       startCanvasFallbackRecording();
     }
   };
@@ -327,69 +380,121 @@ export default function App() {
 
   // 自动根据提取的歌名检索网络歌词
   const autoFetchLyricsForFileName = async (rawFileName) => {
-    const apiKey = getApiKey();
-    if (!apiKey) return;
-
+    const requestId = ++lyricRequestIdRef.current;
     const cleanTitle = cleanFileNameForSearch(rawFileName);
-    if (!cleanTitle) return;
+    setSearchKeyword(cleanTitle);
+    setIsAutoSearching(false);
+
+    if (!cleanTitle) {
+      setLyricMatchStatus({ type: 'error', message: '无法从文件名识别歌曲，请手动输入歌名匹配' });
+      return;
+    }
+
+    const apiKey = getApiKey();
+    if (!apiKey) {
+      setLyricMatchStatus({ type: 'needs-key', message: `已载入音频；配置 API Key 后可搜索“${cleanTitle}”` });
+      return;
+    }
 
     setIsAutoSearching(true);
+    setLyricMatchStatus({ type: 'searching', message: `正在匹配“${cleanTitle}”…` });
     setLyricOffset(0);
 
     try {
-      let searchRes = await searchSongs(cleanTitle, 'wy', 5);
-      let source = 'wy';
-      if (!searchRes.ok || !searchRes.songs || searchRes.songs.length === 0) {
-        searchRes = await searchSongs(cleanTitle, 'kuwo', 5);
-        source = 'kuwo';
+      const normalize = value => String(value || '').toLowerCase().replace(/[\s\-_·・()（）\[\]【】]/g, '');
+      const normalizedTitle = normalize(cleanTitle);
+      let matchedSong = null;
+      let matchedLyrics = null;
+
+      for (const source of ['wy', 'qq', 'kuwo']) {
+        const searchRes = await searchSongs(cleanTitle, source, 5);
+        if (requestId !== lyricRequestIdRef.current) return;
+        if (!searchRes.ok || !searchRes.songs?.length) continue;
+
+        const candidates = searchRes.songs
+          .filter(song => {
+            const candidateName = normalize(song.name);
+            return candidateName && (candidateName.includes(normalizedTitle) || normalizedTitle.includes(candidateName));
+          })
+          .slice(0, 3);
+
+        for (const candidate of candidates) {
+          const detailRes = await getSongDetail(candidate, source);
+          if (requestId !== lyricRequestIdRef.current) return;
+          if (detailRes.ok && detailRes.song?.lyrics?.length) {
+            matchedSong = candidate;
+            matchedLyrics = detailRes.song.lyrics;
+            break;
+          }
+        }
+        if (matchedLyrics) break;
       }
 
-      if (searchRes.ok && searchRes.songs && searchRes.songs.length > 0) {
-        const topSong = searchRes.songs[0];
-        const detailRes = await getSongDetail(topSong, source);
-        if (detailRes.ok && detailRes.song && detailRes.song.lyrics && detailRes.song.lyrics.length > 0) {
-          setCurrentSong(prev => ({
-            ...prev,
-            name: topSong.name || prev.name,
-            singer: topSong.singer || prev.singer,
-            cover: topSong.cover || prev.cover,
-            lyrics: detailRes.song.lyrics
-          }));
-        }
+      if (matchedLyrics) {
+        setCurrentSong(prev => ({ ...prev, lyrics: matchedLyrics }));
+        setLyricMatchStatus({
+          type: 'success',
+          message: `已匹配：${matchedSong.name}${matchedSong.singer ? ` · ${matchedSong.singer}` : ''}`
+        });
+      } else {
+        setLyricMatchStatus({ type: 'error', message: '未找到可信的自动匹配，请手动选择候选歌词' });
       }
     } catch (err) {
       console.warn("Auto lyric fetch notice:", err);
+      if (requestId === lyricRequestIdRef.current) {
+        setLyricMatchStatus({ type: 'error', message: err?.message || '自动匹配失败，请手动搜索' });
+      }
     } finally {
-      setIsAutoSearching(false);
+      if (requestId === lyricRequestIdRef.current) setIsAutoSearching(false);
     }
   };
 
   // 选择在线整曲 (妖狐 API)
   const handleSelectSong = (song) => {
+    lyricRequestIdRef.current += 1;
+    replaceLocalObjectUrls([]);
     setCurrentSong(song);
     setIsPlaying(false);
     setIsMultiTrack(false);
+    setIsMultiTrackOpen(false);
+    setVocalTrackName('');
+    setAccTrackName('');
+    setCurrentTime(0);
+    setDuration(0);
     setLyricOffset(0);
+    setLyricMatchStatus({ type: 'success', message: '已载入在线音频与歌词' });
     if (song.url) {
       audioEngine.setMainTrack(song.url);
-      setTimeout(() => {
-        audioEngine.play().then(() => setIsPlaying(true));
-      }, 300);
+      startPlayback();
     }
   };
 
   // 保留当前音频，仅匹配在线歌词
-  const handleImportLyricsOnly = (lyrics) => {
+  const handleImportLyricsOnly = (lyrics, matchedSong) => {
+    lyricRequestIdRef.current += 1;
+    setIsAutoSearching(false);
     setCurrentSong(prev => ({
       ...prev,
       lyrics
     }));
     setLyricOffset(0);
+    setLyricMatchStatus({
+      type: 'success',
+      message: matchedSong?.name ? `已应用歌词：${matchedSong.name}` : '歌词已应用到当前音频'
+    });
   };
 
   // 载入本地合并单轨
   const handleLoadSingleTrack = ({ name, singer, url, file }) => {
+    lyricRequestIdRef.current += 1;
+    replaceLocalObjectUrls([url]);
     setIsMultiTrack(false);
+    setIsMultiTrackOpen(false);
+    setVocalTrackName('');
+    setAccTrackName('');
+    setIsPlaying(false);
+    setCurrentTime(0);
+    setDuration(0);
     setLyricOffset(0);
     const newSong = {
       name,
@@ -400,9 +505,8 @@ export default function App() {
     };
     setCurrentSong(newSong);
     audioEngine.setMainTrack(url);
-    setTimeout(() => {
-      audioEngine.play().then(() => setIsPlaying(true));
-    }, 300);
+    audioEngine.setMasterVolume(volume, isMuted);
+    startPlayback();
 
     if (file && file.name) {
       autoFetchLyricsForFileName(file.name);
@@ -412,10 +516,17 @@ export default function App() {
   };
 
   // 载入本地分轨 (人声 + 伴奏)
-  const handleLoadMultiTracks = ({ name, vocalUrl, accUrl, vocalName, accName }) => {
+  const handleLoadMultiTracks = ({ name, vocalUrl, accUrl, vocalName, accName, vocalVol: nextVocalVol, accVol: nextAccVol }) => {
+    lyricRequestIdRef.current += 1;
+    replaceLocalObjectUrls([vocalUrl, accUrl]);
     setIsMultiTrack(true);
+    setIsPlaying(false);
+    setCurrentTime(0);
+    setDuration(0);
     setVocalTrackName(vocalName);
     setAccTrackName(accName);
+    setVocalVol(nextVocalVol);
+    setAccVol(nextAccVol);
     setIsMultiTrackOpen(true);
     setLyricOffset(0);
 
@@ -428,9 +539,10 @@ export default function App() {
     };
     setCurrentSong(newSong);
     audioEngine.setMultiTracks(vocalUrl, accUrl);
-    setTimeout(() => {
-      audioEngine.play().then(() => setIsPlaying(true));
-    }, 300);
+    audioEngine.setMasterVolume(volume, isMuted);
+    audioEngine.setVocalVolume(nextVocalVol, false);
+    audioEngine.setAccVolume(nextAccVol, false);
+    startPlayback();
 
     const targetName = vocalName || accName || name;
     autoFetchLyricsForFileName(targetName);
@@ -442,15 +554,33 @@ export default function App() {
     if (!file) return;
     const reader = new FileReader();
     reader.onload = (evt) => {
-      const text = evt.target.result;
+      lyricRequestIdRef.current += 1;
+      setIsAutoSearching(false);
+      const buffer = evt.target.result;
+      let text = '';
+      try {
+        text = new TextDecoder('utf-8', { fatal: true }).decode(buffer);
+      } catch {
+        try {
+          text = new TextDecoder('gb18030').decode(buffer);
+        } catch {
+          text = new TextDecoder().decode(buffer);
+        }
+      }
       const parsed = parseLrc(text);
       setCurrentSong(prev => ({
         ...prev,
         lyrics: parsed
       }));
       setLyricOffset(0);
+      setLyricMatchStatus(parsed.length
+        ? { type: 'success', message: `已导入本地歌词：${file.name}` }
+        : { type: 'error', message: '没有从该文件解析出有效时间轴歌词' });
     };
-    reader.readAsText(file);
+    reader.onerror = () => {
+      setLyricMatchStatus({ type: 'error', message: '无法读取该歌词文件' });
+    };
+    reader.readAsArrayBuffer(file);
   };
 
   // 上传分轨人声
@@ -458,9 +588,22 @@ export default function App() {
     const file = e.target.files[0];
     if (!file) return;
     const url = URL.createObjectURL(file);
+    const retainedAccUrl = isMultiTrack ? (localObjectUrlsRef.current[1] || null) : null;
+    replaceLocalObjectUrls([url, retainedAccUrl]);
     setVocalTrackName(file.name);
     setIsMultiTrack(true);
-    audioEngine.setMultiTracks(url, null);
+    setIsPlaying(false);
+    if (!isMultiTrack) {
+      setCurrentSong({
+        name: `[分轨] ${file.name.replace(/\.[^/.]+$/, '')}`,
+        singer: '本地多轨道分轨',
+        cover: '',
+        url,
+        lyrics: []
+      });
+    }
+    audioEngine.updateMultiTrack('vocal', url);
+    setPlaybackNotice('人声轨已更新，点击播放继续');
     autoFetchLyricsForFileName(file.name);
   };
 
@@ -469,10 +612,33 @@ export default function App() {
     const file = e.target.files[0];
     if (!file) return;
     const url = URL.createObjectURL(file);
+    const retainedVocalUrl = isMultiTrack ? (localObjectUrlsRef.current[0] || null) : null;
+    replaceLocalObjectUrls([retainedVocalUrl, url]);
     setAccTrackName(file.name);
     setIsMultiTrack(true);
-    audioEngine.setMultiTracks(null, url);
+    setIsPlaying(false);
+    if (!isMultiTrack) {
+      setCurrentSong({
+        name: `[分轨] ${file.name.replace(/\.[^/.]+$/, '')}`,
+        singer: '本地多轨道分轨',
+        cover: '',
+        url,
+        lyrics: []
+      });
+    }
+    audioEngine.updateMultiTrack('acc', url);
+    setPlaybackNotice('伴奏轨已更新，点击播放继续');
     autoFetchLyricsForFileName(file.name);
+  };
+
+  const openSearch = () => {
+    setSearchKeyword(current => current || cleanFileNameForSearch(currentSong?.name || ''));
+    setIsSearchOpen(true);
+  };
+
+  const closeRecorderModal = () => {
+    setIsRecorderModalOpen(false);
+    setRecordedVideoUrl(null);
   };
 
   const currentModeInfo = VISUAL_MODES.find(m => m.id === currentMode) || VISUAL_MODES[0];
@@ -483,7 +649,6 @@ export default function App() {
       {/* Visualizer Canvas Layer */}
       <VisualizerCanvas
         mode={currentMode}
-        isPlaying={isPlaying}
         onCanvasClick={togglePlay}
       />
 
@@ -521,10 +686,10 @@ export default function App() {
                 ? 'bg-red-500/20 border-red-500 text-red-400 animate-pulse shadow-[0_0_15px_rgba(239,68,68,0.5)]'
                 : 'bg-white/10 border-white/15 text-white/80 hover:text-red-400'
             }`}
-            title={isRecording ? '点击停止录制并保存' : '录制全网页音画片段 (支持微信朋友圈 MP4 下载)'}
+            title={isRecording ? '点击停止录制并保存' : '录制全网页音画片段（格式取决于浏览器支持）'}
           >
             {isRecording ? <Square className="w-3.5 h-3.5 fill-current text-red-500" /> : <Video className="w-3.5 h-3.5 text-red-400" />}
-            <span>{isRecording ? `录制中 (${recordTime}s)` : '录制 MP4 视频'}</span>
+            <span>{isRecording ? `录制中 (${recordTime}s)` : '录制视频'}</span>
           </button>
 
           {/* Lock UI Button */}
@@ -558,7 +723,7 @@ export default function App() {
           </button>
 
           <button
-            onClick={() => setIsSearchOpen(true)}
+            onClick={openSearch}
             className="flex items-center space-x-1.5 px-3.5 py-1.5 rounded-full bg-gradient-to-r from-dream-purple to-dream-pink text-white text-xs font-semibold shadow-lg hover:opacity-90 transition"
           >
             <Search className="w-3.5 h-3.5" />
@@ -577,6 +742,8 @@ export default function App() {
           isAutoSearching={isAutoSearching}
           lyricOffset={lyricOffset}
           onChangeOffset={(newOffset) => setLyricOffset(newOffset)}
+          matchStatus={lyricMatchStatus}
+          onOpenSearch={openSearch}
         />
       </main>
 
@@ -585,7 +752,6 @@ export default function App() {
         <div className="fixed right-6 bottom-28 z-40 animate-fade-in">
           <MultiTrackPanel
             isMultiTrack={isMultiTrack}
-            onToggleMultiTrack={() => setIsMultiTrack(!isMultiTrack)}
             vocalVol={vocalVol}
             setVocalVol={setVocalVol}
             vocalMuted={vocalMuted}
@@ -619,7 +785,7 @@ export default function App() {
           setVolume={setVolume}
           isMuted={isMuted}
           setIsMuted={setIsMuted}
-          onOpenSearch={() => setIsSearchOpen(true)}
+          onOpenSearch={openSearch}
           onOpenModeMenu={() => setIsModeMenuOpen(true)}
           onToggleMultiTrackPanel={() => setIsMultiTrackOpen(!isMultiTrackOpen)}
           onOpenLocalModal={() => setIsLocalModalOpen(true)}
@@ -635,7 +801,7 @@ export default function App() {
       {/* Modals */}
       <RecorderModal
         isOpen={isRecorderModalOpen}
-        onClose={() => setIsRecorderModalOpen(false)}
+        onClose={closeRecorderModal}
         videoUrl={recordedVideoUrl}
         songName={currentSong?.name}
         mimeType={activeMimeType}
@@ -646,7 +812,7 @@ export default function App() {
         onClose={() => setIsLocalModalOpen(false)}
         onLoadSingleTrack={handleLoadSingleTrack}
         onLoadMultiTracks={handleLoadMultiTracks}
-        onOpenSearch={() => setIsSearchOpen(true)}
+        onOpenSearch={openSearch}
       />
 
       <SearchModal
@@ -655,6 +821,7 @@ export default function App() {
         onSelectSong={handleSelectSong}
         onImportLyricsOnly={handleImportLyricsOnly}
         currentSong={currentSong}
+        initialKeyword={searchKeyword}
       />
 
       <ModeSelector
@@ -663,6 +830,12 @@ export default function App() {
         currentMode={currentMode}
         onSelectMode={(modeId) => setCurrentMode(modeId)}
       />
+
+      {playbackNotice && (
+        <div className="fixed left-1/2 bottom-28 z-[60] -translate-x-1/2 rounded-full border border-white/15 bg-black/80 px-4 py-2 text-xs text-white/80 backdrop-blur-xl">
+          {playbackNotice}
+        </div>
+      )}
 
     </div>
   );

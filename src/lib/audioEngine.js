@@ -2,10 +2,11 @@
  * Web Audio API 音频与频谱引擎
  */
 
-class AudioEngine {
+export class AudioEngine {
   constructor() {
     this.audioContext = null;
     this.analyser = null;
+    this.masterGain = null;
     this.streamDestination = null;
 
     // 单轨道元素与节点
@@ -24,6 +25,7 @@ class AudioEngine {
 
     this.isMultiTrack = false;
     this.initialized = false;
+    this.listeners = new Map();
   }
 
   /**
@@ -42,6 +44,7 @@ class AudioEngine {
 
     // 创建录屏专用音频流目标节点
     this.streamDestination = this.audioContext.createMediaStreamDestination();
+    this.masterGain = this.audioContext.createGain();
 
     // 创建 HTMLAudioElement 实例
     this.mainAudio = new Audio();
@@ -72,13 +75,45 @@ class AudioEngine {
       this.accSource.connect(this.accGain);
       this.accGain.connect(this.analyser);
 
-      this.analyser.connect(this.audioContext.destination);
-      this.analyser.connect(this.streamDestination);
+      this.analyser.connect(this.masterGain);
+      this.masterGain.connect(this.audioContext.destination);
+      this.masterGain.connect(this.streamDestination);
     } catch (e) {
       console.warn("AudioContext source setup notice:", e);
     }
 
+    const emitMetadata = () => this.emit('metadata', { duration: this.getDuration() });
+    const emitError = () => this.emit('error', { message: '音频加载或播放失败' });
+    [this.mainAudio, this.vocalAudio, this.accAudio].forEach(audio => {
+      audio.addEventListener('loadedmetadata', emitMetadata);
+      audio.addEventListener('durationchange', emitMetadata);
+      audio.addEventListener('error', emitError);
+      audio.addEventListener('ended', () => {
+        if (this.hasEnded()) this.emit('ended');
+      });
+    });
+
     this.initialized = true;
+  }
+
+  on(eventName, listener) {
+    if (!this.listeners.has(eventName)) this.listeners.set(eventName, new Set());
+    this.listeners.get(eventName).add(listener);
+    return () => this.listeners.get(eventName)?.delete(listener);
+  }
+
+  emit(eventName, payload) {
+    this.listeners.get(eventName)?.forEach(listener => listener(payload));
+  }
+
+  clearAudio(audio) {
+    audio.pause();
+    audio.removeAttribute('src');
+    audio.load();
+  }
+
+  pauseAll() {
+    [this.mainAudio, this.vocalAudio, this.accAudio].forEach(audio => audio?.pause());
   }
 
   async resumeContext() {
@@ -102,6 +137,9 @@ class AudioEngine {
    */
   setMainTrack(src) {
     this.init();
+    this.pauseAll();
+    this.clearAudio(this.vocalAudio);
+    this.clearAudio(this.accAudio);
     this.isMultiTrack = false;
     this.mainAudio.src = src;
     this.mainAudio.load();
@@ -112,6 +150,10 @@ class AudioEngine {
    */
   setMultiTracks(vocalSrc, accSrc) {
     this.init();
+    this.pauseAll();
+    this.clearAudio(this.mainAudio);
+    this.clearAudio(this.vocalAudio);
+    this.clearAudio(this.accAudio);
     this.isMultiTrack = true;
     if (vocalSrc) {
       this.vocalAudio.src = vocalSrc;
@@ -123,13 +165,40 @@ class AudioEngine {
     }
   }
 
-  play() {
-    this.resumeContext();
+  updateMultiTrack(track, src) {
+    this.init();
+    this.pauseAll();
+    this.clearAudio(this.mainAudio);
+    this.isMultiTrack = true;
+    const audio = track === 'vocal' ? this.vocalAudio : this.accAudio;
+    this.clearAudio(audio);
+    if (src) {
+      audio.src = src;
+      audio.load();
+    }
+  }
+
+  async play() {
+    await this.resumeContext();
     if (this.isMultiTrack) {
-      const p1 = this.vocalAudio.src ? this.vocalAudio.play() : Promise.resolve();
-      const p2 = this.accAudio.src ? this.accAudio.play() : Promise.resolve();
-      return Promise.all([p1, p2]);
+      const activeTracks = [this.vocalAudio, this.accAudio].filter(audio => audio.src);
+      if (activeTracks.length === 0) throw new Error('请先选择至少一个分轨音频文件');
+      if (activeTracks.every(audio => audio.ended)) this.seek(0);
+      const playableTracks = activeTracks.filter(audio => !audio.ended);
+      const referenceTime = Math.min(...playableTracks.map(audio => audio.currentTime || 0));
+      playableTracks.forEach(audio => {
+        if (Math.abs((audio.currentTime || 0) - referenceTime) > 0.08) {
+          audio.currentTime = referenceTime;
+        }
+      });
+      try {
+        return await Promise.all(playableTracks.map(audio => audio.play()));
+      } catch (error) {
+        this.pauseAll();
+        throw error;
+      }
     } else {
+      if (!this.mainAudio.src) throw new Error('请先选择音频文件');
       return this.mainAudio.play();
     }
   }
@@ -144,11 +213,20 @@ class AudioEngine {
   }
 
   seek(time) {
+    const duration = this.getDuration();
+    const safeTime = Math.max(0, Math.min(Number.isFinite(duration) && duration > 0 ? duration : Number.MAX_SAFE_INTEGER, Number(time) || 0));
     if (this.isMultiTrack) {
-      if (this.vocalAudio.src) this.vocalAudio.currentTime = time;
-      if (this.accAudio.src) this.accAudio.currentTime = time;
+      if (this.vocalAudio.src) this.vocalAudio.currentTime = safeTime;
+      if (this.accAudio.src) this.accAudio.currentTime = safeTime;
     } else {
-      this.mainAudio.currentTime = time;
+      this.mainAudio.currentTime = safeTime;
+    }
+    return safeTime;
+  }
+
+  setMasterVolume(vol, isMuted = false) {
+    if (this.masterGain) {
+      this.masterGain.gain.setValueAtTime(isMuted ? 0 : vol, this.audioContext.currentTime);
     }
   }
 
@@ -182,6 +260,17 @@ class AudioEngine {
       return Math.max(this.vocalAudio.duration || 0, this.accAudio.duration || 0);
     }
     return this.mainAudio.duration || 0;
+  }
+
+  hasEnded() {
+    if (!this.initialized) return false;
+    if (!this.isMultiTrack) return Boolean(this.mainAudio.src && this.mainAudio.ended);
+    const activeTracks = [this.vocalAudio, this.accAudio].filter(audio => audio.src);
+    return activeTracks.length > 0 && activeTracks.every(audio => audio.ended);
+  }
+
+  getMode() {
+    return this.isMultiTrack ? 'multi' : 'single';
   }
 
   getFrequencyData(array) {

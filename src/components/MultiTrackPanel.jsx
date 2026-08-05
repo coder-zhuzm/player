@@ -4,7 +4,6 @@ import { audioEngine } from '../lib/audioEngine';
 
 export default function MultiTrackPanel({
   isMultiTrack,
-  onToggleMultiTrack,
   vocalVol,
   setVocalVol,
   vocalMuted,
@@ -26,16 +25,9 @@ export default function MultiTrackPanel({
           <Layers className="w-5 h-5" />
           <h3 className="text-sm font-bold tracking-wide">多轨道同步调音面板</h3>
         </div>
-        <button
-          onClick={onToggleMultiTrack}
-          className={`px-3 py-1 rounded-full text-xs font-semibold transition border ${
-            isMultiTrack
-              ? 'bg-dream-pink/20 border-dream-pink text-dream-pink'
-              : 'bg-white/5 border-white/10 text-white/50 hover:text-white'
-          }`}
-        >
-          {isMultiTrack ? '分轨模式已开启' : '单轨模式'}
-        </button>
+        <span className="px-3 py-1 rounded-full text-xs font-semibold border bg-dream-pink/20 border-dream-pink text-dream-pink">
+          {isMultiTrack ? '分轨模式已开启' : '请先载入分轨'}
+        </span>
       </div>
 
       {/* Vocal Track Controls */}

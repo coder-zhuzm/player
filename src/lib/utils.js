@@ -24,7 +24,7 @@ export function cleanFileNameForSearch(filename) {
     // 先移除包含分轨标记的括号，避免残留“（版）”等无意义文本
     .replace(/[\(\（][^\)\）]*(vocal|acc|instrumental|伴奏|人声)[^\)\）]*[\)\）]/gi, '')
     // 移除分轨常见后缀
-    .replace(/[-_ ]*(vocal|acc|instrumental|accompaniment|stem|人声|伴奏|主唱|分轨)/gi, '')
+    .replace(/(?:[-_ ]*(?:vocal|acc|instrumental|accompaniment|stem|人声|伴奏|主唱|分轨))+$/gi, '')
     // 替换下划线与多余空格
     .replace(/_/g, ' ')
     .replace(/\s+/g, ' ')

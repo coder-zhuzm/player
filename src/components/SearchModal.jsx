@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { Search, Key, X, Music, Disc, User, Loader2, Check, FileText, Play } from 'lucide-react';
 import { getApiKey, setApiKey, searchSongs, getSongDetail } from '../lib/yaohuApi';
 
-export default function SearchModal({ isOpen, onClose, onSelectSong, onImportLyricsOnly, currentSong }) {
+export default function SearchModal({ isOpen, onClose, onSelectSong, onImportLyricsOnly, currentSong, initialKeyword = '' }) {
   const [apiKey, setKeyInput] = useState('');
   const [keySaved, setKeySaved] = useState(false);
 
@@ -16,7 +16,12 @@ export default function SearchModal({ isOpen, onClose, onSelectSong, onImportLyr
 
   useEffect(() => {
     setKeyInput(getApiKey());
-  }, [isOpen]);
+    if (isOpen && initialKeyword) {
+      setKeyword(initialKeyword);
+      setSongs([]);
+      setErrorMsg('');
+    }
+  }, [isOpen, initialKeyword]);
 
   const handleSaveKey = () => {
     setApiKey(apiKey);
@@ -26,50 +31,67 @@ export default function SearchModal({ isOpen, onClose, onSelectSong, onImportLyr
 
   const handleSearch = async (e) => {
     if (e) e.preventDefault();
-    if (!keyword.trim()) return;
+    if (!keyword.trim()) {
+      setErrorMsg('请输入歌名或“歌手 + 歌名”');
+      return;
+    }
 
     setErrorMsg('');
     setLoading(true);
     setSongs([]);
 
-    const res = await searchSongs(keyword.trim(), source, 20);
-    setLoading(false);
-
-    if (!res.ok) {
-      setErrorMsg(res.error || '搜索失败，请检查 API Key 或网络');
-    } else {
-      setSongs(res.songs || []);
+    try {
+      const res = await searchSongs(keyword.trim(), source, 20);
+      if (!res.ok) {
+        setErrorMsg(res.error || '搜索失败，请检查 API Key 或网络');
+      } else if (!res.songs?.length) {
+        setErrorMsg('没有找到结果，可以尝试补充歌手名或切换来源');
+      } else {
+        setSongs(res.songs);
+      }
+    } catch (error) {
+      setErrorMsg(error?.message || '搜索失败，请稍后重试');
+    } finally {
+      setLoading(false);
     }
   };
 
   // 播放整曲 (音频 + 歌词)
   const handleSelect = async (song, index) => {
+    setErrorMsg('');
     setLoadingSongIndex(index);
-    const detailRes = await getSongDetail(song, source);
-    setLoadingSongIndex(null);
-
-    if (!detailRes.ok) {
-      alert(`无法播放单曲: ${detailRes.error}`);
-      return;
+    try {
+      const detailRes = await getSongDetail(song, source);
+      if (!detailRes.ok || !detailRes.song?.url) {
+        setErrorMsg(`无法播放该结果：${detailRes.error || '没有可用音频地址'}`);
+        return;
+      }
+      onSelectSong(detailRes.song);
+      onClose();
+    } catch (error) {
+      setErrorMsg(error?.message || '无法载入该在线音频');
+    } finally {
+      setLoadingSongIndex(null);
     }
-
-    onSelectSong(detailRes.song);
-    onClose();
   };
 
   // 仅载入歌词 (保留本地音频，只匹配歌词)
   const handleLyricsOnly = async (song, index) => {
+    setErrorMsg('');
     setLoadingSongIndex(index);
-    const detailRes = await getSongDetail(song, source);
-    setLoadingSongIndex(null);
-
-    if (!detailRes.ok) {
-      alert(`无法获取歌词: ${detailRes.error}`);
-      return;
+    try {
+      const detailRes = await getSongDetail(song, source);
+      if (!detailRes.ok || !detailRes.song?.lyrics?.length) {
+        setErrorMsg(`该结果没有可用的时间轴歌词：${detailRes.error || '请尝试其他版本'}`);
+        return;
+      }
+      onImportLyricsOnly(detailRes.song.lyrics, song);
+      onClose();
+    } catch (error) {
+      setErrorMsg(error?.message || '无法获取该结果的歌词');
+    } finally {
+      setLoadingSongIndex(null);
     }
-
-    onImportLyricsOnly(detailRes.song.lyrics);
-    onClose();
   };
 
   if (!isOpen) return null;
@@ -86,6 +108,7 @@ export default function SearchModal({ isOpen, onClose, onSelectSong, onImportLyr
           </div>
           <button
             onClick={onClose}
+            aria-label="关闭歌词搜索"
             className="p-1 rounded-lg text-white/60 hover:text-white hover:bg-white/10 transition"
           >
             <X className="w-5 h-5" />
@@ -113,7 +136,8 @@ export default function SearchModal({ isOpen, onClose, onSelectSong, onImportLyr
             </label>
             <div className="flex space-x-2">
               <input
-                type="text"
+                type="password"
+                autoComplete="off"
                 value={apiKey}
                 onChange={(e) => setKeyInput(e.target.value)}
                 onKeyDown={(e) => e.key === 'Enter' && handleSaveKey()}
@@ -221,6 +245,7 @@ export default function SearchModal({ isOpen, onClose, onSelectSong, onImportLyr
                   {/* 仅匹配歌词 */}
                   <button
                     onClick={() => handleLyricsOnly(song, idx)}
+                    disabled={loadingSongIndex !== null}
                     className="text-xs px-2.5 py-1.5 bg-dream-purple/20 border border-dream-purple/40 text-dream-purple hover:bg-dream-purple hover:text-black rounded-lg transition font-medium flex items-center space-x-1"
                     title="保留当前播放的本地音频，仅匹配并同步此歌词"
                   >
@@ -231,6 +256,7 @@ export default function SearchModal({ isOpen, onClose, onSelectSong, onImportLyr
                   {/* 在线播放整曲 */}
                   <button
                     onClick={() => handleSelect(song, idx)}
+                    disabled={loadingSongIndex !== null}
                     className="text-xs px-2.5 py-1.5 bg-white/10 hover:bg-white/20 text-white rounded-lg transition font-medium flex items-center space-x-1"
                     title="载入在线音频与歌词"
                   >
