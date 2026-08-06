@@ -14,9 +14,10 @@ const BASE_URL = 'https://api.yaohud.cn/api/music';
 const LOCAL_STORAGE_KEY = 'yaohu_api_key';
 
 const SOURCE_CONFIG = {
-  wy: { endpoint: 'wy', lyricType: 'wy', idKeys: ['id', 'songid', 'mid'] },
-  qq: { endpoint: 'qq', lyricType: 'qq', idKeys: ['mid', 'songmid', 'id'] },
-  kuwo: { endpoint: 'kuwo', lyricType: 'kw', idKeys: ['rid', 'id', 'musicrid'] }
+  wy: { endpoint: 'wy', lyricType: 'wy', idKeys: ['id', 'songid', 'mid'], supportsSearchCount: true },
+  // QQ 文档仍列出 g，但当前接口网关会以“参数 g 未配置，禁止传递”拒绝请求。
+  qq: { endpoint: 'qq', lyricType: 'qq', idKeys: ['mid', 'songmid', 'id'], supportsSearchCount: false },
+  kuwo: { endpoint: 'kuwo', lyricType: 'kw', idKeys: ['rid', 'id', 'musicrid'], supportsSearchCount: true }
 };
 
 class RateLimiter {
@@ -121,11 +122,12 @@ export async function searchSongs(keyword, source = 'wy', count = 20) {
 
   const src = SOURCE_CONFIG[source] ? source : 'wy';
   const config = sourceConfig(src);
+  const requestedCount = Math.max(1, Math.min(Number(count) || 20, 50));
   const params = new URLSearchParams({
     key: apiKey,
-    msg: String(keyword || '').trim(),
-    g: String(Math.max(1, Math.min(Number(count) || 20, 50)))
+    msg: String(keyword || '').trim()
   });
+  if (config.supportsSearchCount) params.set('g', String(requestedCount));
   const response = await safeFetch(`${BASE_URL}/${config.endpoint}?${params}`);
   if (!response.ok) return response;
 
@@ -142,7 +144,7 @@ export async function searchSongs(keyword, source = 'wy', count = 20) {
 
   return {
     ok: true,
-    songs: songs.map((song, index) => {
+    songs: songs.slice(0, requestedCount).map((song, index) => {
       const platformId = getPlatformId(song, src);
       return {
         ...song,
@@ -245,6 +247,8 @@ export async function getSongDetail(song, source = 'wy') {
   const params = new URLSearchParams({ key: apiKey });
 
   if (src === 'kuwo' && platformId) {
+    // 当前网关即使在 action=song 模式下仍会强制校验 msg。
+    params.set('msg', song.name || '');
     params.set('action', 'song');
     params.set('id', platformId);
     params.set('size', 'lossless');

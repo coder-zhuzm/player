@@ -1,5 +1,5 @@
 import React from 'react';
-import { Volume2, VolumeX, Mic, Disc3, Upload, Layers } from 'lucide-react';
+import { Volume2, VolumeX, Mic, Disc3, Upload, Layers, Sparkles } from 'lucide-react';
 import { audioEngine } from '../lib/audioEngine';
 
 export default function MultiTrackPanel({
@@ -8,6 +8,8 @@ export default function MultiTrackPanel({
   setVocalVol,
   vocalMuted,
   setVocalMuted,
+  vocalReverb,
+  setVocalReverb,
   accVol,
   setAccVol,
   accMuted,
@@ -73,6 +75,31 @@ export default function MultiTrackPanel({
           />
           <span className="text-xs text-white/60 w-8 text-right">
             {vocalMuted ? 'Mute' : `${Math.round(vocalVol * 100)}%`}
+          </span>
+        </div>
+
+        <div className="flex items-center space-x-3 pt-1 border-t border-white/5">
+          <Sparkles className="w-4 h-4 text-dream-purple" />
+          <label htmlFor="vocal-reverb" className="text-[11px] text-white/60 whitespace-nowrap">
+            人声混响
+          </label>
+          <input
+            id="vocal-reverb"
+            type="range"
+            min="0"
+            max="1"
+            step="0.01"
+            value={vocalReverb}
+            onChange={(event) => {
+              const value = Number.parseFloat(event.target.value);
+              setVocalReverb(value);
+              audioEngine.setVocalReverb(value);
+            }}
+            className="flex-1 accent-dream-purple cursor-pointer h-1.5 bg-white/20 rounded-lg"
+            aria-label="人声混响大小"
+          />
+          <span className="text-xs text-white/60 w-8 text-right">
+            {Math.round(vocalReverb * 100)}%
           </span>
         </div>
       </div>

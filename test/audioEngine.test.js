@@ -32,12 +32,18 @@ class FakeAudioContext {
   constructor() {
     this.currentTime = 0;
     this.state = 'running';
+    this.sampleRate = 100;
     this.destination = fakeNode();
   }
 
   createAnalyser() { return { ...fakeNode(), getByteFrequencyData() {}, getByteTimeDomainData() {} }; }
   createMediaStreamDestination() { return { ...fakeNode(), stream: { getAudioTracks: () => [] } }; }
   createGain() { return { ...fakeNode(), gain: { value: 1, setValueAtTime(value) { this.value = value; } } }; }
+  createConvolver() { return { ...fakeNode(), buffer: null }; }
+  createBuffer(numberOfChannels, length) {
+    const channels = Array.from({ length: numberOfChannels }, () => new Float32Array(length));
+    return { numberOfChannels, length, getChannelData: channel => channels[channel] };
+  }
   createMediaElementSource() { return fakeNode(); }
 }
 
@@ -90,4 +96,19 @@ test('master volume covers every playback mode and seek clamps boundaries', () =
   assert.equal(engine.mainAudio.currentTime, 0);
   assert.equal(engine.seek(500), 120);
   assert.equal(engine.mainAudio.currentTime, 120);
+});
+
+test('vocal reverb uses an impulse response and an equal-power wet/dry mix', () => {
+  const engine = createEngine();
+  engine.setMultiTracks('vocal.wav', 'acc.wav');
+
+  assert.equal(engine.vocalReverb.buffer.numberOfChannels, 2);
+  assert.equal(engine.vocalReverb.buffer.length, 240);
+  assert.equal(engine.setVocalReverb(0.5), 0.5);
+  assert.ok(Math.abs(engine.vocalDryGain.gain.value - Math.SQRT1_2) < 0.000001);
+  assert.ok(Math.abs(engine.vocalWetGain.gain.value - Math.SQRT1_2) < 0.000001);
+
+  assert.equal(engine.setVocalReverb(2), 1);
+  assert.ok(engine.vocalDryGain.gain.value < 0.000001);
+  assert.equal(engine.vocalWetGain.gain.value, 1);
 });

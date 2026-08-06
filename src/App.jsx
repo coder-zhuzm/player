@@ -89,6 +89,7 @@ export default function App() {
   const [isMultiTrack, setIsMultiTrack] = useState(false);
   const [vocalVol, setVocalVol] = useState(0.8);
   const [vocalMuted, setVocalMuted] = useState(false);
+  const [vocalReverb, setVocalReverb] = useState(0);
   const [accVol, setAccVol] = useState(0.8);
   const [accMuted, setAccMuted] = useState(false);
   const [vocalTrackName, setVocalTrackName] = useState('');
@@ -541,6 +542,7 @@ export default function App() {
     audioEngine.setMultiTracks(vocalUrl, accUrl);
     audioEngine.setMasterVolume(volume, isMuted);
     audioEngine.setVocalVolume(nextVocalVol, false);
+    audioEngine.setVocalReverb(vocalReverb);
     audioEngine.setAccVolume(nextAccVol, false);
     startPlayback();
 
@@ -756,6 +758,8 @@ export default function App() {
             setVocalVol={setVocalVol}
             vocalMuted={vocalMuted}
             setVocalMuted={setVocalMuted}
+            vocalReverb={vocalReverb}
+            setVocalReverb={setVocalReverb}
             accVol={accVol}
             setAccVol={setAccVol}
             accMuted={accMuted}

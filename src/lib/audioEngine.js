@@ -18,6 +18,10 @@ export class AudioEngine {
     this.vocalAudio = null;
     this.vocalSource = null;
     this.vocalGain = null;
+    this.vocalDryGain = null;
+    this.vocalReverb = null;
+    this.vocalWetGain = null;
+    this.vocalReverbAmount = 0;
 
     this.accAudio = null;
     this.accSource = null;
@@ -59,7 +63,14 @@ export class AudioEngine {
     // 创建 GainNode
     this.mainGain = this.audioContext.createGain();
     this.vocalGain = this.audioContext.createGain();
+    this.vocalDryGain = this.audioContext.createGain();
+    this.vocalReverb = this.audioContext.createConvolver();
+    this.vocalWetGain = this.audioContext.createGain();
     this.accGain = this.audioContext.createGain();
+
+    this.vocalReverb.buffer = this.createReverbImpulse();
+    this.vocalDryGain.gain.setValueAtTime(1, this.audioContext.currentTime);
+    this.vocalWetGain.gain.setValueAtTime(0, this.audioContext.currentTime);
 
     // 节点连接
     try {
@@ -69,7 +80,12 @@ export class AudioEngine {
 
       this.vocalSource = this.audioContext.createMediaElementSource(this.vocalAudio);
       this.vocalSource.connect(this.vocalGain);
-      this.vocalGain.connect(this.analyser);
+      // 人声分为干声和卷积混响两路，再汇入总频谱与录制链路。
+      this.vocalGain.connect(this.vocalDryGain);
+      this.vocalDryGain.connect(this.analyser);
+      this.vocalGain.connect(this.vocalReverb);
+      this.vocalReverb.connect(this.vocalWetGain);
+      this.vocalWetGain.connect(this.analyser);
 
       this.accSource = this.audioContext.createMediaElementSource(this.accAudio);
       this.accSource.connect(this.accGain);
@@ -94,6 +110,25 @@ export class AudioEngine {
     });
 
     this.initialized = true;
+  }
+
+  /**
+   * 生成约 2.4 秒的双声道空间脉冲，不依赖外部音频文件。
+   */
+  createReverbImpulse(duration = 2.4, decay = 2.8) {
+    const sampleRate = this.audioContext.sampleRate || 44100;
+    const frameCount = Math.max(1, Math.floor(sampleRate * duration));
+    const impulse = this.audioContext.createBuffer(2, frameCount, sampleRate);
+
+    for (let channel = 0; channel < impulse.numberOfChannels; channel++) {
+      const samples = impulse.getChannelData(channel);
+      for (let index = 0; index < frameCount; index++) {
+        const envelope = Math.pow(1 - index / frameCount, decay);
+        samples[index] = (Math.random() * 2 - 1) * envelope;
+      }
+    }
+
+    return impulse;
   }
 
   on(eventName, listener) {
@@ -240,6 +275,17 @@ export class AudioEngine {
     if (this.vocalGain) {
       this.vocalGain.gain.setValueAtTime(isMuted ? 0 : vol, this.audioContext.currentTime);
     }
+  }
+
+  setVocalReverb(amount) {
+    const mix = Math.max(0, Math.min(1, Number(amount) || 0));
+    this.vocalReverbAmount = mix;
+    if (this.vocalDryGain && this.vocalWetGain) {
+      // 等功率交叉混合，调节时不会出现明显的音量塌陷。
+      this.vocalDryGain.gain.setValueAtTime(Math.cos(mix * Math.PI / 2), this.audioContext.currentTime);
+      this.vocalWetGain.gain.setValueAtTime(Math.sin(mix * Math.PI / 2), this.audioContext.currentTime);
+    }
+    return mix;
   }
 
   setAccVolume(vol, isMuted = false) {

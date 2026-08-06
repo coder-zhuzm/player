@@ -35,6 +35,7 @@ test('QQ keeps mid from search and uses it with the aggregate lyric API', async 
 
   const search = await searchSongs('微光', 'qq', 5);
   assert.equal(search.songs[0].mid, '003kfFex37Ld2s');
+  assert.equal(new URL(urls[0]).searchParams.has('g'), false);
 
   const detail = await getSongDetail(search.songs[0], 'qq');
   assert.equal(detail.song.url, 'https://audio.example/qq.m4a');
@@ -42,6 +43,17 @@ test('QQ keeps mid from search and uses it with the aggregate lyric API', async 
   assert.match(urls[2], /\/lrc\?/);
   assert.match(urls[2], /mid=003kfFex37Ld2s/);
   assert.match(urls[2], /type=qq/);
+});
+
+test('search count is only sent to sources whose live endpoint accepts g', async () => {
+  const urls = [];
+  mockFetch([
+    { code: 200, data: { songs: [{ n: 1, name: '一' }, { n: 2, name: '二' }] } }
+  ], urls);
+
+  const search = await searchSongs('测试', 'wy', 1);
+  assert.equal(new URL(urls[0]).searchParams.get('g'), '1');
+  assert.equal(search.songs.length, 1);
 });
 
 test('Kuwo uses RID detail mode, nested audio URL, and type=kw for lyrics', async () => {
@@ -54,6 +66,7 @@ test('Kuwo uses RID detail mode, nested audio URL, and type=kw for lyrics', asyn
   const detail = await getSongDetail({ name: '晴天', rid: '123456', n: 1 }, 'kuwo');
   assert.equal(detail.song.url, 'https://audio.example/kuwo.flac');
   assert.deepEqual(detail.song.lyrics, [{ time: 2.5, text: '酷我歌词' }]);
+  assert.equal(new URL(urls[0]).searchParams.get('msg'), '晴天');
   assert.match(urls[0], /action=song/);
   assert.match(urls[0], /id=123456/);
   assert.match(urls[1], /type=kw/);
