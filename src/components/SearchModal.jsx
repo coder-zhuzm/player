@@ -82,7 +82,7 @@ export default function SearchModal({ isOpen, onClose, onSelectSong, onImportLyr
     try {
       const detailRes = await getSongDetail(song, source);
       if (!detailRes.ok || !detailRes.song?.lyrics?.length) {
-        setErrorMsg(`该结果没有可用的时间轴歌词：${detailRes.error || '请尝试其他版本'}`);
+        setErrorMsg(`该结果没有可用的时间轴歌词：${detailRes.error || detailRes.lyricError || '请尝试其他版本'}`);
         return;
       }
       onImportLyricsOnly(detailRes.song.lyrics, song);
